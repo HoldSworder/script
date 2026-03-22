@@ -1,0 +1,26 @@
+name: CPA 检查并禁用
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+jobs:
+  check-disable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run check & disable
+        working-directory: CPA测活
+        env:
+          CPA_URL: ${{ secrets.CPA_URL }}
+          CPA_KEY: ${{ secrets.CPA_KEY }}
+        run: python clean_codex.py --url "$CPA_URL" --key "$CPA_KEY"

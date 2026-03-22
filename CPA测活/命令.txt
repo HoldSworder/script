@@ -1,0 +1,5 @@
+# 检查并禁用
+python clean_codex.py --url https://router.qzran.cn:8069/ --key z86353534
+
+  # 上面一步执行完之后，如果想要删除，会找出是codex并且禁用的账号，会删除掉
+  python clean_codex.py --url https://router.qzran.cn:8069/ --key z86353534 delete

@@ -1,0 +1,24 @@
+name: CPA 删除已禁用
+
+on:
+  workflow_dispatch:
+
+jobs:
+  delete-disabled:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run delete disabled
+        working-directory: CPA测活
+        env:
+          CPA_URL: ${{ secrets.CPA_URL }}
+          CPA_KEY: ${{ secrets.CPA_KEY }}
+        run: python clean_codex.py --url "$CPA_URL" --key "$CPA_KEY" delete
