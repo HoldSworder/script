@@ -41,7 +41,7 @@ def _load_config():
         "token_json_dir": "codex_tokens",
         "upload_api_url": "",
         "upload_api_token": "",
-        "cpa_cleanup_enabled": True,
+        "cpa_cleanup_enabled": False,
     }
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -2357,13 +2357,11 @@ def main():
     else:
         print("[Info] 不使用代理")
 
-    # 注册前是否清理 CPA 无效号
-    cpa_cleanup = True
+    # 注册前是否清理 CPA 无效号（默认关闭，请使用独立的 CPA 清理工具）
+    cpa_cleanup = False
     if UPLOAD_API_URL:
-        cleanup_input = input("\n注册前清理 CPA 无效号? (Y/n): ").strip().lower()
-        cpa_cleanup = cleanup_input != "n"
-    else:
-        cpa_cleanup = False
+        cleanup_input = input("\n注册前清理 CPA 无效号? (y/N): ").strip().lower()
+        cpa_cleanup = cleanup_input in ("y", "yes")
 
     # 输入注册数量
     count_input = input(f"\n注册账号数量 (默认 {DEFAULT_TOTAL_ACCOUNTS}): ").strip()

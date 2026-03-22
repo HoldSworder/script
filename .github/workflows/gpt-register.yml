@@ -11,10 +11,6 @@ on:
         description: "并发数"
         required: true
         default: "3"
-      cpa_cleanup:
-        description: "注册前清理 CPA 无效号"
-        type: boolean
-        default: true
       proxy:
         description: "代理地址 (留空不使用)"
         required: false
@@ -49,7 +45,6 @@ jobs:
           INPUT_TOTAL: ${{ inputs.total_accounts }}
           INPUT_WORKERS: ${{ inputs.max_workers }}
           INPUT_PROXY: ${{ inputs.proxy }}
-          INPUT_CLEANUP: ${{ inputs.cpa_cleanup }}
         run: |
           python -c "
           import os
@@ -58,12 +53,11 @@ jobs:
           total = int(os.environ.get('INPUT_TOTAL', '3'))
           workers = int(os.environ.get('INPUT_WORKERS', '3'))
           proxy = os.environ.get('INPUT_PROXY', '').strip() or None
-          cleanup = os.environ.get('INPUT_CLEANUP', 'true').lower() == 'true'
 
           run_batch(
               total_accounts=total,
               max_workers=workers,
               proxy=proxy,
-              cpa_cleanup=cleanup,
+              cpa_cleanup=False,
           )
           "
