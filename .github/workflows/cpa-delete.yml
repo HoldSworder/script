@@ -2,10 +2,16 @@ name: CPA 删除已禁用
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["CPA 检查并禁用"]
+    types: [completed]
 
 jobs:
   delete-disabled:
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
 

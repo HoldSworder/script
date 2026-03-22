@@ -42,6 +42,7 @@ def _load_config():
         "upload_api_url": "",
         "upload_api_token": "",
         "cpa_cleanup_enabled": False,
+        "preferred_domains": [],
     }
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -68,6 +69,10 @@ def _load_config():
     config["token_json_dir"] = os.environ.get("TOKEN_JSON_DIR", config["token_json_dir"])
     config["upload_api_url"] = os.environ.get("UPLOAD_API_URL", config["upload_api_url"])
     config["upload_api_token"] = os.environ.get("UPLOAD_API_TOKEN", config["upload_api_token"])
+
+    env_domains = os.environ.get("PREFERRED_DOMAINS", "")
+    if env_domains:
+        config["preferred_domains"] = [d.strip() for d in env_domains.split(",") if d.strip()]
 
     return config
 
@@ -97,6 +102,7 @@ TOKEN_JSON_DIR = _CONFIG["token_json_dir"]
 UPLOAD_API_URL = _CONFIG["upload_api_url"]
 UPLOAD_API_TOKEN = _CONFIG["upload_api_token"]
 CPA_CLEANUP_ENABLED = _as_bool(_CONFIG.get("cpa_cleanup_enabled", True))
+PREFERRED_DOMAINS = set(_CONFIG.get("preferred_domains", []))
 
 if not YYDSMAIL_API_KEY:
     print("⚠️ 警告: 未设置 YYDSMAIL_API_KEY，请在 config.json 中设置或设置环境变量")
@@ -940,6 +946,18 @@ def _fetch_yydsmail_domains():
     return []
 
 
+def _get_usable_domains():
+    """获取可用域名，优先使用白名单"""
+    all_domains = _fetch_yydsmail_domains()
+    if not all_domains:
+        return []
+    if PREFERRED_DOMAINS:
+        filtered = [d for d in all_domains if d in PREFERRED_DOMAINS]
+        if filtered:
+            return filtered
+    return all_domains
+
+
 def _create_yydsmail_session():
     """创建 YYDS Mail 请求会话"""
     session = curl_requests.Session()
@@ -953,8 +971,7 @@ def _create_yydsmail_session():
 
 def create_temp_email():
     """创建 YYDS Mail 临时邮箱，返回 (email, mail_token)"""
-    # 获取可用域名
-    domains = _fetch_yydsmail_domains()
+    domains = _get_usable_domains()
     if not domains:
         raise Exception("无法获取 YYDS Mail 可用域名列表")
 
@@ -1180,7 +1197,7 @@ class ChatGPTRegister:
 
     def create_temp_email(self):
         """创建 YYDS Mail 临时邮箱，返回 (email, mail_token)"""
-        domains = _fetch_yydsmail_domains()
+        domains = _get_usable_domains()
         if not domains:
             raise Exception("无法获取 YYDS Mail 可用域名列表")
 

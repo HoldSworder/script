@@ -42,6 +42,7 @@ jobs:
         env:
           YYDSMAIL_API_KEY: ${{ secrets.YYDSMAIL_API_KEY }}
           UPLOAD_API_TOKEN: ${{ secrets.CPA_KEY }}
+          PREFERRED_DOMAINS: "0m0.email,xiaolajiao.tech,xiaolajiao.de"
           INPUT_TOTAL: ${{ inputs.total_accounts }}
           INPUT_WORKERS: ${{ inputs.max_workers }}
           INPUT_PROXY: ${{ inputs.proxy }}

@@ -14,5 +14,6 @@
   "rk_file": "rk.txt",
   "token_json_dir": "codex_tokens",
   "upload_api_url": "",
-  "upload_api_token": ""
+  "upload_api_token": "",
+  "preferred_domains": ["0m0.email", "xiaolajiao.tech", "xiaolajiao.de"]
 }
