@@ -6,11 +6,13 @@ on:
       total_accounts:
         description: "注册数量"
         required: true
-        default: "3"
+        default: "120"
       max_workers:
         description: "并发数"
         required: true
         default: "3"
+  schedule:
+    - cron: "0 */2 * * *"
       proxy:
         description: "代理地址 (留空不使用)"
         required: false
@@ -43,9 +45,9 @@ jobs:
           YYDSMAIL_API_KEY: ${{ secrets.YYDSMAIL_API_KEY }}
           UPLOAD_API_TOKEN: ${{ secrets.CPA_KEY }}
           PREFERRED_DOMAINS: "0m0.email,xiaolajiao.tech,xiaolajiao.de"
-          INPUT_TOTAL: ${{ inputs.total_accounts }}
-          INPUT_WORKERS: ${{ inputs.max_workers }}
-          INPUT_PROXY: ${{ inputs.proxy }}
+          INPUT_TOTAL: ${{ inputs.total_accounts || '120' }}
+          INPUT_WORKERS: ${{ inputs.max_workers || '3' }}
+          INPUT_PROXY: ${{ inputs.proxy || '' }}
         run: |
           python -c "
           import os
