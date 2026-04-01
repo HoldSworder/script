@@ -1455,83 +1455,137 @@ class ChatGPTRegister:
     # ==================== 自动注册主流程 ====================
 
     def run_register(self, email, password, name, birthdate, mail_token, used_codes=None):
-        """原始重定向驱动流程 + sentinel tokens"""
+        """直接 API 注册流程 — 通过 auth.openai.com OAuth 入口，不走 chatgpt.com"""
         if used_codes is None:
             used_codes = set()
 
-        self.visit_homepage()
-        _random_delay(0.3, 0.8)
-        csrf = self.get_csrf()
-        _random_delay(0.2, 0.5)
-        auth_url = self.signin(email, csrf)
-        _random_delay(0.3, 0.8)
+        # 1. 发起 OAuth 授权（建立 session + 获取 device_id）
+        code_verifier, code_challenge = _generate_pkce()
+        state = secrets.token_urlsafe(24)
+        authorize_params = {
+            "client_id": OAUTH_CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": OAUTH_REDIRECT_URI,
+            "scope": "openid email profile offline_access",
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "prompt": "login",
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+        }
+        authorize_url = f"{OAUTH_ISSUER}/oauth/authorize?{urlencode(authorize_params)}"
 
-        final_url = self.authorize(auth_url)
-        final_path = urlparse(final_url).path
-        _random_delay(0.3, 0.8)
+        self._print("[1] GET /oauth/authorize")
+        r = self.session.get(authorize_url, headers={
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Upgrade-Insecure-Requests": "1",
+        }, allow_redirects=True, timeout=30, impersonate=self.impersonate)
+        self._log("1. OAuth Authorize", "GET", authorize_url, r.status_code,
+                  {"final_url": str(r.url)[:200]})
 
-        self._print(f"Authorize → {final_path}")
+        device_id_cookie = None
+        for c in self.session.cookies:
+            if getattr(c, "name", "") == "oai-did":
+                device_id_cookie = getattr(c, "value", "")
+                break
+        if device_id_cookie:
+            self.device_id = device_id_cookie
+        self.session.cookies.set("oai-did", self.device_id, domain=".auth.openai.com")
+        self.session.cookies.set("oai-did", self.device_id, domain="auth.openai.com")
+        _random_delay(0.8, 2.0)
 
-        need_otp = False
+        # 2. 求解 sentinel PoW + 提交邮箱
+        self._print("[2] POST authorize/continue")
+        sentinel_token = build_sentinel_token(
+            self.session, self.device_id, flow="authorize_continue",
+            user_agent=self.ua, sec_ch_ua=self.sec_ch_ua, impersonate=self.impersonate,
+        )
+        continue_headers = {
+            "Content-Type": "application/json", "Accept": "application/json",
+            "Origin": OAUTH_ISSUER,
+            "Referer": f"{OAUTH_ISSUER}/create-account",
+        }
+        if sentinel_token:
+            continue_headers["openai-sentinel-token"] = sentinel_token
 
-        if "create-account/password" in final_path:
-            self._print("全新注册流程")
-            _random_delay(0.5, 1.0)
+        resp_continue = self.session.post(
+            f"{OAUTH_ISSUER}/api/accounts/authorize/continue",
+            json={"username": {"value": email, "kind": "email"}, "screen_hint": "signup"},
+            headers=continue_headers, timeout=30,
+            allow_redirects=False, impersonate=self.impersonate,
+        )
+        try:
+            continue_data = resp_continue.json()
+        except Exception:
+            continue_data = {"text": resp_continue.text[:300]}
+        self._log("2. Authorize Continue", "POST",
+                  f"{OAUTH_ISSUER}/api/accounts/authorize/continue",
+                  resp_continue.status_code, continue_data)
+
+        if resp_continue.status_code != 200:
+            raise Exception(f"提交邮箱失败: {resp_continue.status_code} {continue_data}")
+
+        page_type = (continue_data.get("page") or {}).get("type", "")
+        self._print(f"  page_type={page_type}")
+        _random_delay(0.5, 1.5)
+
+        is_existing = (page_type == "email_otp_verification")
+
+        # 3. 设置密码（新账号）
+        if not is_existing:
+            self._print("[3] POST register (设置密码)")
             status, data = self.register(email, password)
             if status != 200:
                 raise Exception(f"Register 失败 ({status}): {data}")
             _random_delay(0.3, 0.8)
-            self.send_otp()
-            need_otp = True
-        elif "email-verification" in final_path or "email-otp" in final_path:
-            self._print("跳到 OTP 验证阶段")
-            need_otp = True
-        elif "about-you" in final_path:
-            self._print("跳到填写信息阶段")
-            _random_delay(0.5, 1.0)
-            self.create_account(name, birthdate)
-            _random_delay(0.3, 0.5)
-            self.callback()
-            return True
-        elif "callback" in final_path or "chatgpt.com" in final_url:
-            self._print("账号已完成注册")
-            return True
-        else:
-            self._print(f"未知跳转: {final_url}")
-            self.register(email, password)
-            self.send_otp()
-            need_otp = True
 
-        if need_otp:
+            # 4. 发送 OTP
+            self._print("[4] POST send OTP")
+            self.send_otp()
+        else:
+            self._print("[3-4] 跳过（已注册账号，OTP 已自动发送）")
+
+        _random_delay(0.5, 1.0)
+
+        # 5. 等待并获取验证码
+        otp_code = self.wait_for_verification_email(
+            mail_token, timeout=180, used_codes=used_codes,
+            resend_fn=self.resend_otp,
+        )
+        if not otp_code:
+            raise Exception("未能获取验证码")
+
+        _random_delay(0.3, 0.8)
+
+        # 6. 验证 OTP
+        self._print(f"[6] POST validate OTP: {otp_code}")
+        status, data = self.validate_otp(otp_code)
+        if status != 200:
+            self._print(f"验证码 {otp_code} 无效，尝试获取新验证码...")
+            self.resend_otp()
+            _random_delay(1.0, 2.0)
             otp_code = self.wait_for_verification_email(
-                mail_token, timeout=180, used_codes=used_codes,
-                resend_fn=self.resend_otp,
+                mail_token, timeout=60, used_codes=used_codes,
             )
             if not otp_code:
-                raise Exception("未能获取验证码")
-
+                raise Exception("重试后仍未获取验证码")
             _random_delay(0.3, 0.8)
             status, data = self.validate_otp(otp_code)
             if status != 200:
-                self._print(f"验证码 {otp_code} 无效，尝试获取新验证码...")
-                self.resend_otp()
-                _random_delay(1.0, 2.0)
-                otp_code = self.wait_for_verification_email(
-                    mail_token, timeout=60, used_codes=used_codes,
-                )
-                if not otp_code:
-                    raise Exception("重试后仍未获取验证码")
-                _random_delay(0.3, 0.8)
-                status, data = self.validate_otp(otp_code)
-                if status != 200:
-                    raise Exception(f"验证码失败 ({status}): {data}")
+                raise Exception(f"验证码失败 ({status}): {data}")
 
         _random_delay(0.5, 1.5)
-        status, data = self.create_account(name, birthdate)
-        if status != 200:
-            raise Exception(f"Create account 失败 ({status}): {data}")
-        _random_delay(0.2, 0.5)
-        self.callback()
+
+        # 7. 创建账号（仅新账号）
+        if not is_existing:
+            self._print(f"[7] POST create_account: {name}")
+            status, data = self.create_account(name, birthdate)
+            if status != 200:
+                raise Exception(f"Create account 失败 ({status}): {data}")
+        else:
+            self._print("[7] 跳过创建账号（已存在）")
+
         return True
 
     def _decode_oauth_session_cookie(self):
