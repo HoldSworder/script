@@ -6,21 +6,22 @@ on:
       total_accounts:
         description: "注册数量"
         required: true
-        default: "120"
+        default: "10"
       max_workers:
         description: "并发数"
         required: true
-        default: "3"
-  schedule:
-    - cron: "0 */2 * * *"
+        default: "2"
       proxy:
         description: "代理地址 (留空不使用)"
         required: false
         default: ""
+  schedule:
+    - cron: "0 */3 * * *"
 
 jobs:
   register:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       PYTHONIOENCODING: utf-8
     steps:
@@ -45,16 +46,16 @@ jobs:
           YYDSMAIL_API_KEY: ${{ secrets.YYDSMAIL_API_KEY }}
           UPLOAD_API_TOKEN: ${{ secrets.CPA_KEY }}
           PREFERRED_DOMAINS: "0m0.email,xiaolajiao.tech,xiaolajiao.de"
-          INPUT_TOTAL: ${{ inputs.total_accounts || '120' }}
-          INPUT_WORKERS: ${{ inputs.max_workers || '3' }}
+          INPUT_TOTAL: ${{ inputs.total_accounts || '10' }}
+          INPUT_WORKERS: ${{ inputs.max_workers || '2' }}
           INPUT_PROXY: ${{ inputs.proxy || '' }}
         run: |
           python -c "
           import os
           from chatgpt_register_sentinel import run_batch
 
-          total = int(os.environ.get('INPUT_TOTAL', '3'))
-          workers = int(os.environ.get('INPUT_WORKERS', '3'))
+          total = int(os.environ.get('INPUT_TOTAL', '10'))
+          workers = int(os.environ.get('INPUT_WORKERS', '2'))
           proxy = os.environ.get('INPUT_PROXY', '').strip() or None
 
           run_batch(

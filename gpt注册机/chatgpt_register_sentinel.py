@@ -166,138 +166,108 @@ def _generate_pkce():
     return code_verifier, code_challenge
 
 
-class SentinelTokenGenerator:
-    """纯 Python 版本 sentinel token 生成器（PoW）"""
+# ================= Sentinel PoW (SHA3-512) =================
 
-    MAX_ATTEMPTS = 500000
-    ERROR_PREFIX = "wQ8Lk5FbGpA2NcR9dShT6gYjU7VxZ4D"
+_SENTINEL_SCREEN_SIGS = (3000, 3120, 4000, 4160)
+_SENTINEL_LANG_SIG = "en-US,es-US,en,es"
+_SENTINEL_NAV_KEYS = ("location", "ontransitionend", "onprogress")
+_SENTINEL_WIN_KEYS = ("window", "document", "navigator")
+_SENTINEL_DEFAULT_DIFF = "0fffff"
+_SENTINEL_MAX_ITERS = 500_000
 
-    def __init__(self, device_id=None, user_agent=None):
-        self.device_id = device_id or str(uuid.uuid4())
-        self.user_agent = user_agent or (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/145.0.0.0 Safari/537.36"
-        )
-        self.requirements_seed = str(random.random())
-        self.sid = str(uuid.uuid4())
 
-    @staticmethod
-    def _fnv1a_32(text: str):
-        h = 2166136261
-        for ch in text:
-            h ^= ord(ch)
-            h = (h * 16777619) & 0xFFFFFFFF
-        h ^= (h >> 16)
-        h = (h * 2246822507) & 0xFFFFFFFF
-        h ^= (h >> 13)
-        h = (h * 3266489909) & 0xFFFFFFFF
-        h ^= (h >> 16)
-        h &= 0xFFFFFFFF
-        return format(h, "08x")
+def _sentinel_browser_time() -> str:
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    t = _dt.now(_tz(_td(hours=-5)))
+    return t.strftime("%a %b %d %Y %H:%M:%S") + " GMT-0500 (Eastern Standard Time)"
 
-    def _get_config(self):
-        now_str = time.strftime(
-            "%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)",
-            time.gmtime(),
-        )
-        perf_now = random.uniform(1000, 50000)
-        time_origin = time.time() * 1000 - perf_now
-        nav_prop = random.choice([
-            "vendorSub", "productSub", "vendor", "maxTouchPoints",
-            "scheduling", "userActivation", "doNotTrack", "geolocation",
-            "connection", "plugins", "mimeTypes", "pdfViewerEnabled",
-            "webkitTemporaryStorage", "webkitPersistentStorage",
-            "hardwareConcurrency", "cookieEnabled", "credentials",
-            "mediaDevices", "permissions", "locks", "ink",
-        ])
-        nav_val = f"{nav_prop}-undefined"
 
-        return [
-            "1920x1080",
-            now_str,
-            4294705152,
-            random.random(),
-            self.user_agent,
-            "https://sentinel.openai.com/sentinel/20260124ceb8/sdk.js",
-            None,
-            None,
-            "en-US",
-            "en-US,en",
-            random.random(),
-            nav_val,
-            random.choice(["location", "implementation", "URL", "documentURI", "compatMode"]),
-            random.choice(["Object", "Function", "Array", "Number", "parseFloat", "undefined"]),
-            perf_now,
-            self.sid,
-            "",
-            random.choice([4, 8, 12, 16]),
-            time_origin,
-        ]
+def _sentinel_build_config(user_agent: str) -> list:
+    perf_ms = time.perf_counter() * 1000
+    epoch_ms = (time.time() * 1000) - perf_ms
+    return [
+        random.choice(_SENTINEL_SCREEN_SIGS),
+        _sentinel_browser_time(),
+        4294705152,
+        0,
+        user_agent,
+        "",
+        "",
+        "en-US",
+        _SENTINEL_LANG_SIG,
+        0,
+        random.choice(_SENTINEL_NAV_KEYS),
+        "location",
+        random.choice(_SENTINEL_WIN_KEYS),
+        perf_ms,
+        str(uuid.uuid4()),
+        "",
+        8,
+        epoch_ms,
+    ]
 
-    @staticmethod
-    def _base64_encode(data):
-        raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        return base64.b64encode(raw).decode("ascii")
 
-    def _run_check(self, start_time, seed, difficulty, config, nonce):
-        config[3] = nonce
-        config[9] = round((time.time() - start_time) * 1000)
-        data = self._base64_encode(config)
-        hash_hex = self._fnv1a_32(seed + data)
-        diff_len = len(difficulty)
-        if hash_hex[:diff_len] <= difficulty:
-            return data + "~S"
+def _sentinel_encode_payload(config: list, nonce: int) -> bytes:
+    prefix = (json.dumps(config[:3], separators=(",", ":"), ensure_ascii=False)[:-1] + ",").encode("utf-8")
+    middle = ("," + json.dumps(config[4:9], separators=(",", ":"), ensure_ascii=False)[1:-1] + ",").encode("utf-8")
+    suffix = ("," + json.dumps(config[10:], separators=(",", ":"), ensure_ascii=False)[1:]).encode("utf-8")
+    body = prefix + str(nonce).encode("ascii") + middle + str(nonce >> 1).encode("ascii") + suffix
+    return base64.b64encode(body)
+
+
+def _sentinel_solve_pow(seed: str, difficulty: str, config: list,
+                        max_iters: int = _SENTINEL_MAX_ITERS) -> str:
+    seed_bytes = seed.encode("utf-8")
+    target = bytes.fromhex(difficulty)
+    prefix_len = len(target)
+
+    for nonce in range(max_iters):
+        encoded = _sentinel_encode_payload(config, nonce)
+        digest = hashlib.sha3_512(seed_bytes + encoded).digest()
+        if digest[:prefix_len] <= target:
+            return encoded.decode("ascii")
+
+    raise RuntimeError(f"Sentinel PoW 求解失败 (已尝试 {max_iters} 次)")
+
+
+def build_sentinel_pow_token(user_agent: str,
+                             difficulty: str = _SENTINEL_DEFAULT_DIFF) -> str:
+    config = _sentinel_build_config(user_agent)
+    seed = format(random.random())
+    solution = _sentinel_solve_pow(seed, difficulty, config)
+    return f"gAAAAAC{solution}"
+
+
+_SENTINEL_REQ_URL = "https://sentinel.openai.com/backend-api/sentinel/req"
+_SENTINEL_FRAME_REF = "https://sentinel.openai.com/backend-api/sentinel/frame.html?sv=20260219f9f6"
+
+
+def build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=None,
+                         sec_ch_ua=None, impersonate=None):
+    ua = user_agent or "Mozilla/5.0"
+    try:
+        pow_token = build_sentinel_pow_token(ua)
+    except RuntimeError:
         return None
 
-    def generate_token(self, seed=None, difficulty=None):
-        seed = seed if seed is not None else self.requirements_seed
-        difficulty = str(difficulty or "0")
-        start_time = time.time()
-        config = self._get_config()
-
-        for i in range(self.MAX_ATTEMPTS):
-            result = self._run_check(start_time, seed, difficulty, config, i)
-            if result:
-                return "gAAAAAB" + result
-        return "gAAAAAB" + self.ERROR_PREFIX + self._base64_encode(str(None))
-
-    def generate_requirements_token(self):
-        config = self._get_config()
-        config[3] = 1
-        config[9] = round(random.uniform(5, 50))
-        data = self._base64_encode(config)
-        return "gAAAAAC" + data
-
-
-def fetch_sentinel_challenge(session, device_id, flow="authorize_continue", user_agent=None,
-                             sec_ch_ua=None, impersonate=None):
-    generator = SentinelTokenGenerator(device_id=device_id, user_agent=user_agent)
-    req_body = {
-        "p": generator.generate_requirements_token(),
+    req_body = json.dumps({
+        "p": pow_token,
         "id": device_id,
         "flow": flow,
-    }
+    }, separators=(",", ":"))
+
     headers = {
         "Content-Type": "text/plain;charset=UTF-8",
-        "Referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html",
         "Origin": "https://sentinel.openai.com",
-        "User-Agent": user_agent or "Mozilla/5.0",
-        "sec-ch-ua": sec_ch_ua or '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
+        "Referer": _SENTINEL_FRAME_REF,
     }
 
-    kwargs = {
-        "data": json.dumps(req_body),
-        "headers": headers,
-        "timeout": 20,
-    }
+    kwargs = {"data": req_body, "headers": headers, "timeout": 20}
     if impersonate:
         kwargs["impersonate"] = impersonate
 
     try:
-        resp = session.post("https://sentinel.openai.com/backend-api/sentinel/req", **kwargs)
+        resp = session.post(_SENTINEL_REQ_URL, **kwargs)
     except Exception:
         return None
 
@@ -305,41 +275,15 @@ def fetch_sentinel_challenge(session, device_id, flow="authorize_continue", user
         return None
 
     try:
-        return resp.json()
+        c_value = resp.json().get("token", "")
     except Exception:
         return None
 
-
-def build_sentinel_token(session, device_id, flow="authorize_continue", user_agent=None,
-                         sec_ch_ua=None, impersonate=None):
-    challenge = fetch_sentinel_challenge(
-        session,
-        device_id,
-        flow=flow,
-        user_agent=user_agent,
-        sec_ch_ua=sec_ch_ua,
-        impersonate=impersonate,
-    )
-    if not challenge:
-        return None
-
-    c_value = challenge.get("token", "")
     if not c_value:
         return None
 
-    pow_data = challenge.get("proofofwork") or {}
-    generator = SentinelTokenGenerator(device_id=device_id, user_agent=user_agent)
-
-    if pow_data.get("required") and pow_data.get("seed"):
-        p_value = generator.generate_token(
-            seed=pow_data.get("seed"),
-            difficulty=pow_data.get("difficulty", "0"),
-        )
-    else:
-        p_value = generator.generate_requirements_token()
-
     return json.dumps({
-        "p": p_value,
+        "p": "",
         "t": "",
         "c": c_value,
         "id": device_id,
@@ -1303,28 +1247,43 @@ class ChatGPTRegister:
                 return code
         return None
 
-    def wait_for_verification_email(self, mail_token: str, timeout: int = 120):
-        """等待并提取 OpenAI 验证码"""
+    def wait_for_verification_email(self, mail_token: str, timeout: int = 180,
+                                    used_codes: set = None, resend_fn=None):
+        """等待并提取 OpenAI 验证码，支持自动重发和已用验证码过滤"""
         self._print(f"[OTP] 等待验证码邮件 (最多 {timeout}s)...")
         start_time = time.time()
+        used = used_codes if used_codes is not None else set()
+        last_resend = 0.0
+        resend_interval = 25
 
         while time.time() - start_time < timeout:
             messages = self._fetch_emails_yydsmail(mail_token)
-            if messages and len(messages) > 0:
-                first_msg = messages[0]
-                msg_id = first_msg.get("id")
-
-                if msg_id:
+            if messages:
+                for msg in messages[:8]:
+                    msg_id = msg.get("id")
+                    if not msg_id:
+                        continue
                     detail = self._fetch_email_detail_yydsmail(mail_token, msg_id)
-                    if detail:
-                        content = detail.get("text") or detail.get("html") or ""
-                        code = self._extract_verification_code(content)
-                        if code:
-                            self._print(f"[OTP] 验证码: {code}")
-                            return code
+                    if not detail:
+                        continue
+                    content = detail.get("text") or detail.get("html") or ""
+                    code = self._extract_verification_code(content)
+                    if code and code not in used:
+                        used.add(code)
+                        self._print(f"[OTP] 验证码: {code}")
+                        return code
 
-            elapsed = int(time.time() - start_time)
-            self._print(f"[OTP] 等待中... ({elapsed}s/{timeout}s)")
+            elapsed = time.time() - start_time
+            if resend_fn and elapsed > 20 and (elapsed - last_resend) > resend_interval:
+                try:
+                    resend_fn()
+                    last_resend = elapsed
+                    self._print("[OTP] 已重发验证码")
+                except Exception:
+                    pass
+
+            elapsed_int = int(elapsed)
+            self._print(f"[OTP] 等待中... ({elapsed_int}s/{timeout}s)")
             time.sleep(3)
 
         self._print(f"[OTP] 超时 ({timeout}s)")
@@ -1439,13 +1398,28 @@ class ChatGPTRegister:
 
     def send_otp(self):
         url = f"{self.AUTH}/api/accounts/email-otp/send"
-        r = self.session.get(url, headers={
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": f"{self.AUTH}/create-account/password", "Upgrade-Insecure-Requests": "1",
-        }, allow_redirects=True)
+        r = self.session.post(url, json={}, headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Referer": f"{self.AUTH}/create-account/password",
+            "Origin": self.AUTH,
+        }, impersonate=self.impersonate)
         try: data = r.json()
-        except Exception: data = {"final_url": str(r.url), "status": r.status_code}
-        self._log("5. Send OTP", "GET", url, r.status_code, data)
+        except Exception: data = {"status": r.status_code}
+        self._log("5. Send OTP", "POST", url, r.status_code, data)
+        return r.status_code, data
+
+    def resend_otp(self):
+        url = f"{self.AUTH}/api/accounts/email-otp/resend"
+        r = self.session.post(url, json={}, headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Referer": f"{self.AUTH}/email-verification",
+            "Origin": self.AUTH,
+        }, impersonate=self.impersonate)
+        try: data = r.json()
+        except Exception: data = {"status": r.status_code}
+        self._log("5b. Resend OTP", "POST", url, r.status_code, data)
         return r.status_code, data
 
     def validate_otp(self, code: str):
@@ -1508,8 +1482,11 @@ class ChatGPTRegister:
 
     # ==================== 自动注册主流程 ====================
 
-    def run_register(self, email, password, name, birthdate, mail_token):
+    def run_register(self, email, password, name, birthdate, mail_token, used_codes=None):
         """原始重定向驱动流程 + sentinel tokens"""
+        if used_codes is None:
+            used_codes = set()
+
         self.visit_homepage()
         _random_delay(0.3, 0.8)
         csrf = self.get_csrf()
@@ -1554,17 +1531,22 @@ class ChatGPTRegister:
             need_otp = True
 
         if need_otp:
-            otp_code = self.wait_for_verification_email(mail_token)
+            otp_code = self.wait_for_verification_email(
+                mail_token, timeout=180, used_codes=used_codes,
+                resend_fn=self.resend_otp,
+            )
             if not otp_code:
                 raise Exception("未能获取验证码")
 
             _random_delay(0.3, 0.8)
             status, data = self.validate_otp(otp_code)
             if status != 200:
-                self._print("验证码失败，重试...")
-                self.send_otp()
+                self._print(f"验证码 {otp_code} 无效，尝试获取新验证码...")
+                self.resend_otp()
                 _random_delay(1.0, 2.0)
-                otp_code = self.wait_for_verification_email(mail_token, timeout=60)
+                otp_code = self.wait_for_verification_email(
+                    mail_token, timeout=60, used_codes=used_codes,
+                )
                 if not otp_code:
                     raise Exception("重试后仍未获取验证码")
                 _random_delay(0.3, 0.8)
@@ -1855,10 +1837,11 @@ class ChatGPTRegister:
 
         return None
 
-    def perform_codex_oauth_login_http(self, email: str, password: str, mail_token: str = None):
+    def perform_codex_oauth_login_http(self, email: str, password: str,
+                                       mail_token: str = None, used_codes: set = None):
         self._print("[OAuth] 开始执行 Codex OAuth 纯协议流程...")
+        oauth_used_codes = used_codes if used_codes is not None else set()
 
-        # 兼容两种 domain 形式，确保 auth 域也带 oai-did
         self.session.cookies.set("oai-did", self.device_id, domain=".auth.openai.com")
         self.session.cookies.set("oai-did", self.device_id, domain="auth.openai.com")
 
@@ -1873,6 +1856,9 @@ class ChatGPTRegister:
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "state": state,
+            "prompt": "login",
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
         }
         authorize_url = f"{OAUTH_ISSUER}/oauth/authorize?{urlencode(authorize_params)}"
 
@@ -2065,9 +2051,9 @@ class ChatGPTRegister:
                 return None
 
             headers_otp = _oauth_json_headers(f"{OAUTH_ISSUER}/email-verification")
-            tried_codes = set()
             otp_success = False
-            otp_deadline = time.time() + 120
+            otp_deadline = time.time() + 180
+            last_resend = 0.0
 
             while time.time() < otp_deadline and not otp_success:
                 messages = self._fetch_emails_yydsmail(mail_token) or []
@@ -2082,17 +2068,31 @@ class ChatGPTRegister:
                         continue
                     content = detail.get("text") or detail.get("html") or ""
                     code = self._extract_verification_code(content)
-                    if code and code not in tried_codes:
+                    if code and code not in oauth_used_codes:
                         candidate_codes.append(code)
 
                 if not candidate_codes:
-                    elapsed = int(120 - max(0, otp_deadline - time.time()))
-                    self._print(f"[OAuth] OTP 等待中... ({elapsed}s/120s)")
-                    time.sleep(2)
+                    elapsed = time.time() - (otp_deadline - 180)
+                    if elapsed > 20 and (elapsed - last_resend) > 25:
+                        try:
+                            self.session.post(
+                                f"{OAUTH_ISSUER}/api/accounts/email-otp/resend",
+                                json={},
+                                headers=_oauth_json_headers(f"{OAUTH_ISSUER}/email-verification"),
+                                timeout=15,
+                                impersonate=self.impersonate,
+                            )
+                            last_resend = elapsed
+                            self._print("[OAuth] 已重发 OTP")
+                        except Exception:
+                            pass
+                    elapsed_int = int(elapsed)
+                    self._print(f"[OAuth] OTP 等待中... ({elapsed_int}s/180s)")
+                    time.sleep(3)
                     continue
 
                 for otp_code in candidate_codes:
-                    tried_codes.add(otp_code)
+                    oauth_used_codes.add(otp_code)
                     self._print(f"[OAuth] 尝试 OTP: {otp_code}")
                     try:
                         resp_otp = self.session.post(
@@ -2109,7 +2109,7 @@ class ChatGPTRegister:
 
                     self._print(f"[OAuth] /email-otp/validate -> {resp_otp.status_code}")
                     if resp_otp.status_code != 200:
-                        self._print(f"[OAuth] OTP 无效，继续尝试下一条: {resp_otp.text[:160]}")
+                        self._print(f"[OAuth] OTP 无效: {resp_otp.text[:160]}")
                         continue
 
                     try:
@@ -2125,10 +2125,10 @@ class ChatGPTRegister:
                     break
 
                 if not otp_success:
-                    time.sleep(2)
+                    time.sleep(3)
 
             if not otp_success:
-                self._print(f"[OAuth] OAuth 阶段 OTP 验证失败，已尝试 {len(tried_codes)} 个验证码")
+                self._print(f"[OAuth] OAuth 阶段 OTP 验证失败，已尝试 {len(oauth_used_codes)} 个验证码")
                 return None
 
         code = None
@@ -2208,17 +2208,20 @@ class ChatGPTRegister:
 
 # ==================== 并发批量注册 ====================
 
-def _register_one(idx, total, proxy, output_file):
+def _register_one(idx, total, proxy, output_file, stagger_delay=0):
     """单个注册任务 (在线程中运行) - 使用 YYDS Mail 临时邮箱"""
+    if stagger_delay > 0:
+        time.sleep(stagger_delay)
+
     reg = None
     try:
         reg = ChatGPTRegister(proxy=proxy, tag=f"{idx}")
+        used_codes = set()
 
-        # 1. 创建 YYDS Mail 临时邮箱
         reg._print("[YYDSMail] 创建临时邮箱...")
         email, mail_token = reg.create_temp_email()
         tag = email.split("@")[0]
-        reg.tag = tag  # 更新 tag
+        reg.tag = tag
 
         chatgpt_password = _generate_password()
         name = _random_name()
@@ -2231,14 +2234,16 @@ def _register_one(idx, total, proxy, output_file):
             print(f"  姓名: {name} | 生日: {birthdate}")
             print(f"{'='*60}")
 
-        # 2. 执行注册流程
-        reg.run_register(email, chatgpt_password, name, birthdate, mail_token)
+        reg.run_register(email, chatgpt_password, name, birthdate, mail_token,
+                         used_codes=used_codes)
 
-        # 3. OAuth（可选）
         oauth_ok = True
         if ENABLE_OAUTH:
             reg._print("[OAuth] 开始获取 Codex Token...")
-            tokens = reg.perform_codex_oauth_login_http(email, chatgpt_password, mail_token=mail_token)
+            tokens = reg.perform_codex_oauth_login_http(
+                email, chatgpt_password,
+                mail_token=mail_token, used_codes=used_codes,
+            )
             oauth_ok = bool(tokens and tokens.get("access_token"))
             if oauth_ok:
                 _save_codex_tokens(email, tokens)
@@ -2249,7 +2254,6 @@ def _register_one(idx, total, proxy, output_file):
                     raise Exception(f"{msg}（oauth_required=true）")
                 reg._print(f"[OAuth] {msg}（按配置继续）")
 
-        # 4. 线程安全写入结果
         with _file_lock:
             with open(output_file, "a", encoding="utf-8") as out:
                 out.write(f"{email}----{chatgpt_password}----oauth={'ok' if oauth_ok else 'fail'}\n")
@@ -2298,11 +2302,15 @@ def run_batch(total_accounts: int = 3, output_file="registered_accounts.txt",
     fail_count = 0
     start_time = time.time()
 
+    stagger_per_worker = 2.0
+
     with ThreadPoolExecutor(max_workers=actual_workers) as executor:
         futures = {}
         for idx in range(1, total_accounts + 1):
+            delay = (idx - 1) * stagger_per_worker / actual_workers
             future = executor.submit(
-                _register_one, idx, total_accounts, proxy, output_file
+                _register_one, idx, total_accounts, proxy, output_file,
+                stagger_delay=delay,
             )
             futures[future] = idx
 
