@@ -1379,16 +1379,8 @@ class ChatGPTRegister:
 
     def register(self, email: str, password: str):
         url = f"{self.AUTH}/api/accounts/user/register"
-        sentinel_token = build_sentinel_token(
-            self.session, self.device_id, flow="signup_password",
-            user_agent=self.ua, sec_ch_ua=self.sec_ch_ua, impersonate=self.impersonate,
-        )
         headers = {"Content-Type": "application/json", "Accept": "application/json",
-                    "Referer": f"{self.AUTH}/create-account/password", "Origin": self.AUTH,
-                    "User-Agent": self.ua, "oai-device-id": self.device_id}
-        headers.update(_make_trace_headers())
-        if sentinel_token:
-            headers["openai-sentinel-token"] = sentinel_token
+                    "Referer": f"{self.AUTH}/create-account/password", "Origin": self.AUTH}
         r = self.session.post(url, json={"username": email, "password": password},
                               headers=headers, impersonate=self.impersonate)
         try: data = r.json()
@@ -1424,16 +1416,8 @@ class ChatGPTRegister:
 
     def validate_otp(self, code: str):
         url = f"{self.AUTH}/api/accounts/email-otp/validate"
-        sentinel_token = build_sentinel_token(
-            self.session, self.device_id, flow="email_otp_verification",
-            user_agent=self.ua, sec_ch_ua=self.sec_ch_ua, impersonate=self.impersonate,
-        )
         headers = {"Content-Type": "application/json", "Accept": "application/json",
-                    "Referer": f"{self.AUTH}/email-verification", "Origin": self.AUTH,
-                    "User-Agent": self.ua, "oai-device-id": self.device_id}
-        headers.update(_make_trace_headers())
-        if sentinel_token:
-            headers["openai-sentinel-token"] = sentinel_token
+                    "Referer": f"{self.AUTH}/email-verification", "Origin": self.AUTH}
         r = self.session.post(url, json={"code": code}, headers=headers, impersonate=self.impersonate)
         try: data = r.json()
         except Exception: data = {"text": r.text[:500]}
@@ -1442,20 +1426,8 @@ class ChatGPTRegister:
 
     def create_account(self, name: str, birthdate: str):
         url = f"{self.AUTH}/api/accounts/create_account"
-        sentinel_token = build_sentinel_token(
-            self.session,
-            self.device_id,
-            flow="create_account",
-            user_agent=self.ua,
-            sec_ch_ua=self.sec_ch_ua,
-            impersonate=self.impersonate,
-        )
         headers = {"Content-Type": "application/json", "Accept": "application/json",
-                    "Referer": f"{self.AUTH}/about-you", "Origin": self.AUTH,
-                    "User-Agent": self.ua, "oai-device-id": self.device_id}
-        headers.update(_make_trace_headers())
-        if sentinel_token:
-            headers["openai-sentinel-token"] = sentinel_token
+                    "Referer": f"{self.AUTH}/about-you", "Origin": self.AUTH}
         r = self.session.post(url, json={"name": name, "birthdate": birthdate}, headers=headers,
                               impersonate=self.impersonate)
         try: data = r.json()
